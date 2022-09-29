@@ -3,16 +3,21 @@
 #include <WiFi.h>
 #include <Wire.h>
 #include <WiFiClient.h>
+#include <WiFiClientSecure.h>
 #include <HTTPClient.h>
+#include "ctm_api_root.h"
 
 #define FREEZER_PIN 25
 #define LED 5
+#define TIME_TO_ALARM 1000 * 60 * 5 // 5 minutes left open we'll alarm
 
 bool freezerOpen = false;
+bool didAlarm = false;
+unsigned long lastOpenTime = 0;
+unsigned long lastCloseTime = 0;
 
 void blink(int pin, int seconds);
-void printLine();
-void requestURL(const char * host, uint8_t port);
+void postAlarm(const char*msg);
 void connectToWiFi(const char * ssid, const char * pwd);
 
 const char *ssid = "<%= @config[:ssid] %>";
@@ -35,7 +40,7 @@ void setup() {
   Serial.begin(115200);
 
   pinMode(LED, OUTPUT);
-  pinMode(FREEZER_PIN, INPUT);
+  pinMode(FREEZER_PIN, INPUT_PULLDOWN);
 
   Serial.println("start up");
   blink(LED, 5);
@@ -43,7 +48,7 @@ void setup() {
 
   connectToWiFi(ssid, pass);
 
-  digitalWrite(LED, LOW);
+  digitalWrite(LED, HIGH);
   Serial.println("ready");
 }
 
@@ -52,15 +57,28 @@ void loop() {
 
   if (freezerDoor == LOW) {
     if (!freezerOpen) {
+      lastOpenTime = millis();
       Serial.println("freezer open");
       digitalWrite(LED, LOW); // green light off indicating door is open e.g. bad
       freezerOpen = true;
+      didAlarm = false;
+    } else if (millis() - lastOpenTime > 15000) { // left open for more then given seconds
+      if (!didAlarm) {
+        didAlarm = true;
+        postAlarm("<%= CGI.escape('Freezer Door is Open') %>");
+      }
     }
   } else {
     if (freezerOpen) {
+      lastCloseTime = millis();
       Serial.println("freezer closed");
       digitalWrite(LED, HIGH); // green light on indicating door is closed e.g. good
       freezerOpen = false;
+      lastOpenTime  = 0;
+      if (didAlarm) {
+        postAlarm("<%= CGI.escape('Freezer Door is Closed') %>");
+      }
+      didAlarm = false;
     }
   }
   delay(100);
@@ -69,7 +87,6 @@ void loop() {
 void connectToWiFi(const char * ssid, const char * pwd) {
   int ledState = 0;
 
-  printLine();
   Serial.println("Connecting to WiFi network: " + String(ssid));
 
   WiFi.begin(ssid, pwd);
@@ -89,26 +106,33 @@ void connectToWiFi(const char * ssid, const char * pwd) {
   Serial.println(WiFi.localIP());
 }
 
-void requestURL(const char * host, uint8_t port) {
-  printLine();
-  Serial.println("Connecting to domain: " + String(host));
-
-  // Use WiFiClient class to create TCP connections
-  WiFiClient client;
-  if (!client.connect(host, port)) {
-    Serial.println("connection failed");
+void postAlarm(const char*msg) {
+  WiFiClientSecure client;
+  client.setCACert(root_ca);
+  if (!client.connect("api.calltrackingmetrics.com", 443)) {
+    Serial.println(F("Connection error to ctm"));
+    blink(LED, 10);
     return;
   }
-  Serial.println("Connected!");
-  printLine();
+  String body;
+  String header;
 
-  // This will send the request to the server
-  client.print((String)"GET / HTTP/1.1\r\n" +
-               "Host: " + String(host) + "\r\n" +
-               "Connection: close\r\n\r\n");
+  body = "to=<%= CGI.escape(@config[:ctm][:to]) %>&from=<%= CGI.escape(@config[:ctm][:from]) %>&msg=";
+  body += msg;
+
+  header = "POST /api/v1/accounts/<%= @config[:ctm][:act] %>/sms HTTP/1.1\r\nHost: api.calltrackingmetrics.com\r\nContent-Type: application/x-www-form-urlencoded\r\nAuthorization: Basic <%= @config[:ctm][:key] %>\r\nConnection: close\r\nContent-Length:";
+  header += body.length();
+  header += "\r\n\r\n";
+  Serial.print(header);
+  Serial.print(body);
+
+  client.print(header);
+  client.print(body);
+
   unsigned long timeout = millis();
+
   while (client.available() == 0) {
-    if (millis() - timeout > 5000) {
+    if (millis() - timeout > 15000) {
       Serial.println(">>> Client Timeout !");
       client.stop();
       return;
@@ -124,11 +148,4 @@ void requestURL(const char * host, uint8_t port) {
   Serial.println();
   Serial.println("closing connection");
   client.stop();
-}
-
-void printLine() {
-  Serial.println();
-  for (int i=0; i<30; i++)
-    Serial.print("-");
-  Serial.println();
 }
