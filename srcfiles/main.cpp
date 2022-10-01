@@ -18,9 +18,9 @@
 #define FREEZER_PIN 6
 #define LED 34
 #elif PICOW
-#define FRIDGE_PIN 21
-#define FREEZER_PIN 6
-#define LED 20
+#define FRIDGE_PIN 16
+#define FREEZER_PIN 4
+#define LED 15
 #endif
 #define TIME_TO_ALARM 1000 * 60 * 5 // 5 minutes left open we'll alarm
 /*
