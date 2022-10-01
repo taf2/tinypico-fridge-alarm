@@ -4,6 +4,13 @@ all: detector
 upload: detector
 	pio run -j 2 --target upload && sleep 1;  pio device monitor
 
+pico:
+	pio run -e pico -j 2 --target upload && sleep 1;  pio device monitor
+tinypico:
+	pio run -e tinypico -j 2 --target upload && sleep 1;  pio device monitor
+tinys3:
+	pio run e tinys3 -j 2 --target upload && sleep 1;  pio device monitor
+
 detector: targets
 	pio run
 

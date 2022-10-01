@@ -1,4 +1,6 @@
-#include <TinyPICO.h>
+#include <Arduino.h>
+#include <SPI.h>
+//#include <TinyPICO.h>
 
 #include <WiFi.h>
 #include <Wire.h>
@@ -7,12 +9,30 @@
 #include <HTTPClient.h>
 #include "ctm_api_root.h"
 
-#define FREEZER_PIN 25
+#ifdef TINYPICO_PINS
+#define FRIDGE_PIN 25
+#define FREEZER_PIN 33
 #define LED 5
+#elif  TINYS3_PINS
+#define FRIDGE_PIN 21
+#define FREEZER_PIN 6
+#define LED 34
+#elif PICOW
+#define FRIDGE_PIN 21
+#define FREEZER_PIN 6
+#define LED 20
+#endif
 #define TIME_TO_ALARM 1000 * 60 * 5 // 5 minutes left open we'll alarm
+/*
+ * each input pin from the detector pin is connected to FRIDGE_PIN/FREEZER_PIN via a voltage divider from the NO (normally open) pin
+ * voltage is (1.5k) -- (our signal pin) -- (5.1k) via our ~5v pin we should see between (4v in) 3.06 and 3.86 (5v in) -
+ * making it safe to measure as a HIGH signal
+ */
 
+bool fridgeOpen = false;
 bool freezerOpen = false;
-bool didAlarm = false;
+bool didFridgeAlarm = false;
+bool didFreezerAlarm = false;
 unsigned long lastOpenTime = 0;
 unsigned long lastCloseTime = 0;
 
@@ -24,7 +44,7 @@ const char *ssid = "<%= @config[:ssid] %>";
 const char *pass = "<%= @config[:pass] %>";
 const char *node = "<%= @config[:events][:name] %>";
 
-TinyPICO tp = TinyPICO();
+//TinyPICO tp = TinyPICO();
 
 void blink(int pin, int seconds) {
   for (int i = 0; i < seconds; ++i) {
@@ -40,6 +60,7 @@ void setup() {
   Serial.begin(115200);
 
   pinMode(LED, OUTPUT);
+  pinMode(FRIDGE_PIN, INPUT_PULLDOWN);
   pinMode(FREEZER_PIN, INPUT_PULLDOWN);
 
   Serial.println("start up");
@@ -52,35 +73,42 @@ void setup() {
   Serial.println("ready");
 }
 
-void loop() {
-  int freezerDoor = digitalRead(FREEZER_PIN);
-
-  if (freezerDoor == LOW) {
-    if (!freezerOpen) {
+void notifyDoorOpen(bool &didAlarm, bool &doorOpen, int doorPin, const char *openMessage, const char *closeMessage) {
+  if (doorPin == LOW) {
+    if (!doorOpen) {
       lastOpenTime = millis();
-      Serial.println("freezer open");
+      Serial.println(openMessage);
       digitalWrite(LED, LOW); // green light off indicating door is open e.g. bad
-      freezerOpen = true;
+      doorOpen = true;
       didAlarm = false;
     } else if (millis() - lastOpenTime > 15000) { // left open for more then given seconds
       if (!didAlarm) {
         didAlarm = true;
-        postAlarm("<%= CGI.escape('Freezer Door is Open') %>");
+        postAlarm(openMessage);
       }
     }
   } else {
-    if (freezerOpen) {
+    if (doorOpen) {
       lastCloseTime = millis();
-      Serial.println("freezer closed");
+      Serial.println(closeMessage);
       digitalWrite(LED, HIGH); // green light on indicating door is closed e.g. good
-      freezerOpen = false;
+      doorOpen = false;
       lastOpenTime  = 0;
       if (didAlarm) {
-        postAlarm("<%= CGI.escape('Freezer Door is Closed') %>");
+        postAlarm(closeMessage);
       }
       didAlarm = false;
     }
   }
+}
+
+void loop() {
+  int fridgeDoor = digitalRead(FRIDGE_PIN);
+  int freezerDoor = digitalRead(FREEZER_PIN);
+
+  notifyDoorOpen(didFridgeAlarm, fridgeOpen, fridgeDoor, "<%= CGI.escape('Fridge Door is Open') %>", "<%= CGI.escape('Fridge Door is Closed') %>");
+  notifyDoorOpen(didFreezerAlarm, freezerOpen, freezerDoor, "<%= CGI.escape('Freezer Door is Open') %>", "<%= CGI.escape('Freezer Door is Closed') %>");
+
   delay(100);
 }
 
@@ -91,8 +119,7 @@ void connectToWiFi(const char * ssid, const char * pwd) {
 
   WiFi.begin(ssid, pwd);
 
-  while (WiFi.status() != WL_CONNECTED)
-  {
+  while (WiFi.status() != WL_CONNECTED) {
     // Blink LED while we're connecting:
     digitalWrite(LED, ledState);
     ledState = (ledState + 1) % 2; // Flip ledState
