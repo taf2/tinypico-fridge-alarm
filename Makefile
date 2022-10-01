@@ -11,7 +11,7 @@ tinypico:
 	pio run -e tinypico -j 2 --target upload && sleep 1;  pio device monitor
 
 tinys3:
-	pio run -e um_tinys3 -j 2 --target upload --upload-port /dev/cu.usbmodem14101 -v && sleep 1;  pio device monitor
+	pio run -e um_tinys3 -j 2 --target upload --upload-port /dev/cu.usbmodem14101 && sleep 1;  pio device monitor
 
 detector: targets
 	pio run
